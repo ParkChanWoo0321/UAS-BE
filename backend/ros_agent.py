@@ -23,6 +23,9 @@ COMMAND_TOPIC = "/fmu/in/vehicle_command"
 RTL = VehicleCommand.VEHICLE_CMD_NAV_RETURN_TO_LAUNCH
 NAV_RTL = VehicleStatus.NAVIGATION_STATE_AUTO_RTL
 NAV_OFFBOARD = VehicleStatus.NAVIGATION_STATE_OFFBOARD
+POSITION_TIMEOUT = 6
+# PX4 publishes status less frequently than position, in simulation time.
+STATUS_TIMEOUT = 60
 
 
 def emit(kind, **fields):
@@ -77,9 +80,9 @@ class Flight:
             self.data[key] = (message, time.monotonic())
         return receive
 
-    def _read(self, key):
+    def _read(self, key, timeout):
         sample = self.data.get(key)
-        if sample and time.monotonic() - sample[1] < 6:
+        if sample and time.monotonic() - sample[1] < timeout:
             return sample[0]
         return None
 
@@ -106,8 +109,7 @@ class Flight:
             and self._isolated()
         )
 
-    def _position(self):
-        position = self._read("position")
+    def _valid_position(self, position):
         return position if (
             position and position.xy_valid and position.z_valid
             and all(math.isfinite(x) for x in (position.x, position.y, position.z))
@@ -121,9 +123,10 @@ class Flight:
                 self.message = f"PX4가 귀환 요청을 거절했어요. 응답 코드 {self.rtl_ack}."
 
     def request_return(self):
-        status = self._read("status")
+        status = self._read("status", STATUS_TIMEOUT)
+        position = self._valid_position(self._read("position", POSITION_TIMEOUT))
         self.return_response = True
-        if not self._can_return(status, self._position() is not None):
+        if not self._can_return(status, position is not None):
             self.message = "현재 PX4 위치와 시동 상태로 귀환을 요청할 수 없어요."
             return
         self.command.publish(VehicleCommand(
@@ -137,10 +140,11 @@ class Flight:
         self.message = None
 
     def sample(self):
-        status = self._read("status")
-        position = self._position()
-        flags = self._read("flags")
-        fresh = status is not None and self._read("position") is not None
+        position_sample = self._read("position", POSITION_TIMEOUT)
+        position = self._valid_position(position_sample)
+        status = self._read("status", STATUS_TIMEOUT)
+        flags = self._read("flags", STATUS_TIMEOUT)
+        fresh = position_sample is not None
         armed = bool(status and status.arming_state == VehicleStatus.ARMING_STATE_ARMED)
         self.armed_once |= armed
         if status and position and self._ready_to_dispatch(status):
@@ -166,6 +170,8 @@ class Flight:
             phase = "landed"
         elif not fresh:
             phase = "signal_lost" if self.dispatched else "waiting"
+        elif status is None:
+            phase = "status_delayed" if self.dispatched else "waiting"
         elif status.failsafe:
             phase = "failsafe"
         elif armed and status.nav_state == NAV_RTL:
@@ -179,6 +185,8 @@ class Flight:
         else:
             phase = "takeoff"
         message = self.message
+        if phase == "status_delayed":
+            message = "PX4 위치 신호는 수신 중이에요. 비행 상태를 갱신하고 있어요."
         if phase == "waiting" and status and not status.pre_flight_checks_pass:
             message = "PX4 시동 전 점검이 완료되면 입력한 임무를 전송해요."
         if phase == "failsafe":
