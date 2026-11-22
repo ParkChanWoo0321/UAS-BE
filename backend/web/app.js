@@ -9,7 +9,8 @@ const phases = {
   launching: "시작 중", waiting: "PX4 연결 대기", arming: "시동 요청", takeoff: "멀티콥터 비행",
   transition: "기체 전환 중", cruise: "고정익 순항", patrol: "순찰 구역", returning: "귀환 중",
   landed: "착륙 완료", disarmed: "시동 해제", failsafe: "페일세이프",
-  signal_lost: "신호 끊김", stopping: "종료 중", stopped: "종료", failed: "실행 실패",
+  signal_lost: "신호 끊김", status_delayed: "비행 상태 갱신 대기",
+  stopping: "종료 중", stopped: "종료", failed: "실행 실패",
   interrupted: "연결 종료",
 };
 const modes = { 0: "수동", 1: "고도 제어", 2: "위치 제어", 3: "자동 임무", 4: "대기 비행",
