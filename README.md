@@ -153,3 +153,38 @@ sudo systemctl start mysql
 - **이미 시뮬레이터 프로젝트가 있는 경우**에도 새로 받은 `$HOME/UAS-BE`를 별도 디렉터리로 두고 실행할 수 있습니다. 해당 PC에서 쓰던 MySQL 설정을 사용하려면 시작 전에 `MARITIME_MYSQL_CONFIG`로 설정 파일을 지정하세요.
 
 PC마다 연결한 MySQL에 임무 설정과 실행 이력이 저장됩니다. 새 데이터베이스에 연결하면 목록은 비어 있으며, 필요한 좌표와 고도는 새 콘솔에서 다시 저장할 수 있습니다.
+
+### Docker 서비스와 현재 계정 확인
+
+비행 기능을 사용할 Ubuntu PC에서 시뮬레이터 런타임을 설치한 뒤, 콘솔을 실행할 일반 터미널에서 다음 명령을 실행하세요. Docker 서버 버전이 출력되면 현재 계정으로 Docker를 사용할 수 있습니다.
+
+```bash
+docker version --format '{{.Server.Version}}'
+~/.local/bin/maritime status
+```
+
+- `Cannot connect to the Docker daemon`이 나오면 Docker Engine이 설치되어 있는지 확인하고 `sudo systemctl start docker`로 서비스를 시작하세요.
+- Docker 소켓에서 `permission denied`가 나오면, 이 PC에서 Docker를 사용할 권한이 있는 계정으로 아래 명령을 실행하세요. `docker` 그룹에는 관리자 수준의 Docker 권한이 있으므로 공유 PC에서는 관리자에게 요청하세요. [Docker 공식 설치 후 설정](https://docs.docker.com/engine/install/linux-postinstall/#manage-docker-as-a-non-root-user)
+
+  ```bash
+  getent group docker >/dev/null || sudo groupadd docker
+  sudo usermod -aG docker "$USER"
+  ```
+
+  Ubuntu 세션에서 완전히 로그아웃한 뒤 다시 로그인하세요. 새 터미널에서 `docker version --format '{{.Server.Version}}'`과 `~/.local/bin/maritime status`를 다시 확인한 뒤 콘솔을 실행합니다.
+
+#### Docker는 연결되는데 `maritime`에서 그룹 전환 오류가 나는 경우
+
+서버 버전은 출력되는데 `maritime status`가 `setgroups: Operation not permitted` 또는 `setgid: Invalid argument`로 실패하면, 기존 런처가 불필요하게 `sg docker`를 호출하는 경우입니다. `~/.local/bin/maritime`의 Docker 그룹 검사 조건 한 줄을 아래처럼 바꾸세요.
+
+```bash
+if [[ " $(id -nG) " != *' docker '* ]] && ! docker version --format '{{.Server.Version}}' >/dev/null 2>&1; then
+```
+
+이 조건은 이미 Docker에 접속 가능한 셸에서는 그룹 전환을 건너뜁니다. 조건문 안의 그룹 조회 줄도 아래처럼 바꾸면 그룹이 없는 환경에서 조회 실패만으로 스크립트가 중단되는 일을 피할 수 있습니다.
+
+```bash
+docker_members=$(getent group docker | cut -d: -f4 || true)
+```
+
+`bash -n "$HOME/.local/bin/maritime"`으로 구문을 확인하고 `~/.local/bin/maritime status`를 실행하세요. 두 명령이 통과하면 README의 **콘솔 실행** 단계부터 진행합니다.
