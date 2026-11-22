@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>해양 감시 시뮬레이션</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" type="module"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="page-width topbar-content">
+      <div class="brand"><span class="brand-icon" aria-hidden="true"><i></i></span><span>해양 감시</span></div>
+      <div id="db-status" class="connection" role="status"><span></span>MySQL 확인 중</div>
+    </div>
+  </header>
+  <main class="page-width">
+    <div class="page-heading">
+      <div>
+        <h1>시뮬레이션 콘솔</h1>
+        <p>해안 월드 <code>sea_mission</code></p>
+      </div>
+      <div id="connection" class="connection vehicle-connection"><span></span>PX4 대기 중</div>
+    </div>
+
+    <div class="layout">
+      <section class="panel mission" aria-labelledby="mission-title">
+        <div class="panel-title">
+          <h2 id="mission-title">임무 설정</h2>
+          <span id="run-id" class="run-id" hidden></span>
+        </div>
+        <form id="mission-form">
+          <div class="coordinate-fields">
+            <label for="north">북쪽 좌표
+              <span class="number"><input id="north" name="north" type="number" step="any" value="1200" required><span>m</span></span>
+            </label>
+            <label for="east">동쪽 좌표
+              <span class="number"><input id="east" name="east" type="number" step="any" value="500" required><span>m</span></span>
+            </label>
+          </div>
+          <label for="altitude">목표 고도
+            <span class="number"><input id="altitude" name="altitude" type="number" step="any" value="35" required><span>m</span></span>
+          </label>
+          <p class="field-note">출발점 기준 좌표 · 고도는 0.1m 초과</p>
+          <button id="start" class="primary" type="submit" disabled>시뮬레이션 실행</button>
+        </form>
+        <div class="actions">
+          <button id="return" type="button" disabled>출발점 귀환</button>
+          <button id="stop" type="button" disabled>시뮬레이션 종료</button>
+        </div>
+        <p id="message" class="message" role="status" hidden></p>
+        <section id="mission-library" class="mission-library" aria-labelledby="mission-library-title">
+          <h3 id="mission-library-title">저장된 임무 설정</h3>
+          <label for="mission-select">설정 선택</label>
+          <select id="mission-select" disabled><option value="">목록 불러오는 중</option></select>
+          <div class="actions">
+            <button id="mission-load" type="button" disabled>불러오기</button>
+            <button id="mission-delete" class="danger" type="button" disabled>삭제</button>
+          </div>
+          <label class="mission-name-label" for="mission-name">임무 이름</label>
+          <input id="mission-name" type="text" maxlength="80" autocomplete="off" placeholder="예시 · 동쪽 해안 순찰" disabled>
+          <div class="actions">
+            <button id="mission-create" type="button" disabled>새 설정 저장</button>
+            <button id="mission-update" type="button" disabled>변경사항 저장</button>
+          </div>
+          <p id="mission-feedback" class="mission-feedback" role="status" hidden></p>
+          <button id="mission-retry" class="mission-retry" type="button" hidden>목록 다시 불러오기</button>
+        </section>
+        <dialog id="mission-delete-dialog" aria-labelledby="mission-delete-title" aria-describedby="mission-delete-description">
+          <form method="dialog">
+            <h3 id="mission-delete-title">임무 설정 삭제</h3>
+            <p id="mission-delete-description"></p>
+            <div class="actions">
+              <button value="cancel" autofocus>취소</button>
+              <button class="danger" value="delete">삭제</button>
+            </div>
+          </form>
+        </dialog>
+      </section>
+
+      <section class="panel flight" aria-labelledby="flight-title">
+        <div class="panel-title">
+          <h2 id="flight-title">비행 상태</h2>
+          <span id="phase" class="phase" aria-live="polite">대기 중</span>
+        </div>
+        <div class="plot">
+          <canvas id="track" aria-label="출발점, 목표 좌표 및 PX4 위치 궤적" role="img"></canvas>
+        </div>
+        <div class="legend">
+          <span><i class="legend-home"></i>출발점</span>
+          <span><i class="legend-target"></i>목표</span>
+          <span><i class="legend-track"></i>비행 궤적</span>
+        </div>
+        <dl class="telemetry">
+          <div><dt>북쪽 / 동쪽</dt><dd id="position">—</dd></div>
+          <div><dt>현재 고도</dt><dd id="height">—</dd></div>
+          <div><dt>목표까지</dt><dd id="distance">—</dd></div>
+          <div><dt>비행 모드</dt><dd id="mode">—</dd></div>
+        </dl>
+      </section>
+    </div>
+
+    <section class="panel history" aria-labelledby="history-title">
+      <div class="panel-title"><h2 id="history-title">실행 이력</h2></div>
+      <div id="history-empty" class="history-empty">실행 이력을 불러오고 있어요.</div>
+      <div id="history-scroll" class="table-scroll" hidden>
+        <table>
+          <thead><tr><th scope="col">시작 시각</th><th scope="col">북쪽</th><th scope="col">동쪽</th><th scope="col">목표 고도</th><th scope="col">상태</th></tr></thead>
+          <tbody id="history-rows"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
