@@ -85,6 +85,88 @@ chmod 600 "$HOME/.config/maritime/mysql.cnf"
 
 기본 `maritime` 실행 도구는 헤드리스 모드에서 선박 감지 프로그램과 QGroundControl을 시작하는 단계를 생략합니다.
 
+## MySQL에서 데이터 확인 및 CRUD 실습
+
+### 콘솔이 쓰는 MySQL에 접속하기
+
+웹에서 임무 이름을 `DB 확인`으로 입력하고 **새 설정 저장**을 누르세요. 콘솔을 시작할 때 사용한 것과 같은 MySQL 설정 파일로 Ubuntu 터미널에서 접속합니다.
+
+```bash
+mysql --defaults-file="${MARITIME_MYSQL_CONFIG:-$HOME/.config/maritime/mysql.cnf}"
+```
+
+다른 경로의 설정 파일로 콘솔을 시작했다면, 접속할 터미널에도 같은 `MARITIME_MYSQL_CONFIG` 값을 지정하세요. `mysql>` 프롬프트가 뜨면 아래 SQL을 실행합니다.
+
+```sql
+SELECT DATABASE() AS current_database;
+SHOW TABLES;
+```
+
+기본 설정의 데이터베이스 이름은 `maritime_surveillance`입니다. 테이블이 아직 없다면 콘솔을 열고 **MySQL 연결됨**이 표시될 때까지 기다린 다음 다시 조회하세요.
+
+### 저장한 임무와 실행 이력 조회하기
+
+```sql
+SELECT id, name, north, east, altitude
+FROM maritime_console_missions
+WHERE name = 'DB 확인'
+ORDER BY id DESC
+LIMIT 10;
+```
+
+방금 저장한 이름, 북쪽·동쪽 좌표, 고도가 나오면 저장이 확인된 것입니다. `WHERE name = 'DB 확인'` 줄을 빼면 이름과 관계없이 최근 10건을 조회합니다.
+
+```sql
+SELECT id, north, east, altitude, phase, started_at
+FROM maritime_console_runs
+ORDER BY id DESC
+LIMIT 10;
+```
+
+실행 이력에는 시뮬레이션을 실행할 때 입력한 좌표와 고도, 실행 상태(`phase`), 시작 시각이 표시됩니다.
+
+### SQL로 임무 설정 생성·조회·수정·삭제하기
+
+아래 예제를 **같은 MySQL 세션**에서 순서대로 실행하세요. `LAST_INSERT_ID()`로 방금 생성한 임무의 ID를 받아 이후 쿼리에 사용합니다. 오류가 나오면 진행을 멈추고 `ROLLBACK;`을 실행하세요.
+
+```sql
+START TRANSACTION;
+
+-- C: 임무 설정 생성
+INSERT INTO maritime_console_missions (name, north, east, altitude)
+VALUES ('MySQL CRUD 실습', 1200, 500, 35);
+
+SET @demo_mission_id = LAST_INSERT_ID();
+
+-- R: 방금 만든 임무 조회
+SELECT id, name, north, east, altitude
+FROM maritime_console_missions
+WHERE id = @demo_mission_id;
+
+-- U: 같은 임무의 이름과 고도 수정
+UPDATE maritime_console_missions
+SET name = 'MySQL CRUD 실습 수정', altitude = 45
+WHERE id = @demo_mission_id;
+
+SELECT id, name, north, east, altitude
+FROM maritime_console_missions
+WHERE id = @demo_mission_id;
+
+-- D: 실습용 임무 삭제
+DELETE FROM maritime_console_missions
+WHERE id = @demo_mission_id;
+
+SELECT ROW_COUNT() AS deleted_rows;
+
+SELECT id, name
+FROM maritime_console_missions
+WHERE id = @demo_mission_id;
+
+ROLLBACK;
+```
+
+수정 후 조회에서 고도가 `45`로 바뀌고, 삭제 후 `deleted_rows`가 `1`이며 마지막 조회가 `Empty set`이면 실습이 성공한 것입니다. 마지막 `ROLLBACK;`으로 실습 트랜잭션을 마칩니다. MySQL을 나가려면 `exit`를 입력하세요.
+
 ## API
 
 서버가 실행 중일 때 [FastAPI API 문서](http://127.0.0.1:8765/docs)에서 요청 형식을 확인할 수 있습니다.
