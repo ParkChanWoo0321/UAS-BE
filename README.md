@@ -135,3 +135,21 @@ curl -X POST http://127.0.0.1:8765/api/missions \
 | `maritime` 실행 실패 또는 Docker 권한 오류 | 일반 Ubuntu 터미널에서 `docker info`와 `~/.local/bin/maritime status`가 실행되는지 확인합니다. |
 | PX4 응답 대기, 신호 끊김 또는 페일세이프 | 화면 메시지와 `~/.local/bin/maritime status`를 확인합니다. 실행별 로그는 `~/maritime-setup/runs/`에 있습니다. ROS 2 중계 오류는 해당 실행의 `console.log`를 확인하세요. |
 | 귀환 버튼이 비활성화됨 | PX4 시동, 위치 추정, 상태 수신을 확인합니다. 귀환 요청 처리 중에도 버튼이 비활성화됩니다. |
+
+## 다른 PC에 적용하기
+
+링크를 받은 사람은 사용할 Ubuntu PC에서 위의 **설치와 실행** 1~3단계를 진행하면 됩니다. 공개 저장소의 소스는 `git clone`으로 받을 수 있습니다. 콘솔 주소 `127.0.0.1:8765`는 명령을 실행한 PC의 브라우저에서 엽니다.
+
+Ubuntu 24.04에서 Git, Python 가상환경 패키지, MySQL이 설치되어 있지 않다면 먼저 설치하세요.
+
+```bash
+sudo apt update
+sudo apt install git python3.12-venv mysql-server
+sudo systemctl start mysql
+```
+
+- **콘솔과 임무 설정만 사용**하려면 Python 가상환경과 해당 PC의 MySQL을 준비합니다. **MySQL 연결됨**이 표시되면 임무 설정을 저장하고 불러올 수 있습니다.
+- **비행 시뮬레이션까지 사용**하려면 해당 PC에 별도로 설치한 해양 감시 시뮬레이터가 필요합니다. Docker를 시작하고 일반 터미널에서 `docker info`와 `~/.local/bin/maritime status`가 실행되는지 확인하세요. `$HOME/UAS-BE`에서 콘솔을 실행하면 기존 런타임을 호출합니다. PX4·Gazebo 월드와 ROS 2 런타임은 기존 시뮬레이터 설치 절차에 따라 준비하세요.
+- **이미 시뮬레이터 프로젝트가 있는 경우**에도 새로 받은 `$HOME/UAS-BE`를 별도 디렉터리로 두고 실행할 수 있습니다. 해당 PC에서 쓰던 MySQL 설정을 사용하려면 시작 전에 `MARITIME_MYSQL_CONFIG`로 설정 파일을 지정하세요.
+
+PC마다 연결한 MySQL에 임무 설정과 실행 이력이 저장됩니다. 새 데이터베이스에 연결하면 목록은 비어 있으며, 필요한 좌표와 고도는 새 콘솔에서 다시 저장할 수 있습니다.
