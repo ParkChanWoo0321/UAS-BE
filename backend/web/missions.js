@@ -1,4 +1,6 @@
 const endpoint = "/api/missions";
+const assets = "/static/coastline/";
+const format = new Intl.NumberFormat("ko-KR", { maximumFractionDigits: 1 });
 
 async function requestMission(path, { method = "GET", data } = {}) {
   const headers = method === "GET" ? {} : { "X-Maritime-Control": "1" };
@@ -18,25 +20,35 @@ async function requestMission(path, { method = "GET", data } = {}) {
   return body;
 }
 
-export function createMissionControls(panel, { readTarget, applyTarget }) {
-  const find = (name) => panel.querySelector(`#mission-${name}`);
-  const select = find("select");
-  const name = find("name");
-  const load = find("load");
-  const create = find("create");
-  const update = find("update");
-  const remove = find("delete");
-  const retry = find("retry");
-  const feedback = find("feedback");
-  const dialog = document.getElementById("mission-delete-dialog");
-  const deleteDescription = document.getElementById("mission-delete-description");
+function icon(name) {
+  const image = document.createElement("img");
+  image.src = assets + name + ".svg";
+  image.alt = "";
+  return image;
+}
 
+export function createMissionControls({ readTarget, applyTarget, resetTarget }) {
+  const byId = (name) => document.getElementById("mission-" + name);
+  const list = byId("list");
+  const name = byId("name");
+  const save = byId("save");
+  const fresh = byId("new");
+  const empty = byId("empty");
+  const retry = byId("retry");
+  const feedback = byId("feedback");
+  const lockNote = byId("lock-note");
+  const dialog = byId("delete-dialog");
+  const description = byId("delete-description");
   let missions = [];
-  let loadedId = "";
-  let deleteId = "";
+  let selectedId = null;
+  let deleteId = null;
   let ready = false;
   let pending = false;
-  let inputsLocked = false;
+  let locked = false;
+
+  function canEdit() {
+    return ready && !pending && !locked;
+  }
 
   function show(message = "", isError = false) {
     feedback.textContent = message;
@@ -44,32 +56,74 @@ export function createMissionControls(panel, { readTarget, applyTarget }) {
     feedback.hidden = !message;
   }
 
-  function render() {
-    const selected = select.value;
-    const canEdit = ready && !pending && !inputsLocked;
-    select.disabled = !ready || pending || missions.length === 0;
-    load.disabled = !canEdit || !selected;
-    name.disabled = !canEdit;
-    create.disabled = !canEdit;
-    update.disabled = !canEdit || !selected || loadedId !== selected;
-    remove.disabled = !ready || pending || !selected;
-    retry.disabled = pending;
+  function makeRow(mission) {
+    const selected = selectedId === mission.id;
+    const row = document.createElement("li");
+    row.className = "mission-item";
+    const entry = document.createElement("button");
+    entry.type = "button";
+    entry.className = "mission-entry";
+    entry.disabled = !canEdit();
+    entry.dataset.id = mission.id;
+    entry.setAttribute("aria-pressed", String(selected));
+    const copy = document.createElement("span");
+    const title = document.createElement("strong");
+    title.textContent = mission.name;
+    const values = document.createElement("code");
+    values.textContent = "N " + format.format(mission.north) + " / E " + format.format(mission.east)
+      + " m · " + format.format(mission.altitude) + " m";
+    copy.append(title, values);
+    entry.append(icon("folder"), copy);
+    entry.addEventListener("click", async () => {
+      if (!canEdit()) return;
+      await operate(async () => {
+        const item = await requestMission(endpoint + "/" + mission.id);
+        if (locked) return;
+        selectedId = item.id;
+        applyTarget(item);
+        name.value = item.name;
+        show("임무를 불러왔습니다.");
+      });
+      list.querySelector('[data-id="' + mission.id + '"]')?.focus();
+    });
+    row.append(entry);
+    if (selected && !locked) {
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "mission-delete danger";
+      remove.disabled = !canEdit();
+      remove.setAttribute("aria-label", mission.name + " 삭제");
+      remove.append(icon("trash"), document.createTextNode("삭제"));
+      remove.addEventListener("click", () => {
+        deleteId = mission.id;
+        dialog.returnValue = "";
+        description.textContent = "‘" + mission.name + "’ 임무를 삭제할까요?";
+        dialog.showModal();
+      });
+      row.append(remove);
+    }
+    return row;
   }
 
-  function renderOptions(selected = "") {
-    const label = missions.length ? "저장된 설정을 선택하세요" : "저장된 설정이 없어요";
-    select.replaceChildren(
-      new Option(label, ""),
-      ...missions.map((mission) => new Option(mission.name, String(mission.id))),
-    );
-    select.value = missions.some((mission) => String(mission.id) === selected) ? selected : "";
+  function render() {
+    const scroll = list.scrollTop;
+    list.replaceChildren(...missions.map(makeRow));
+    list.scrollTop = scroll;
+    empty.hidden = missions.length > 0;
+    empty.textContent = ready ? "저장된 임무가 없습니다." : "저장된 임무를 확인하고 있습니다.";
+    name.disabled = !canEdit();
+    save.disabled = !canEdit() || !name.value.trim();
+    fresh.disabled = !canEdit();
+    fresh.hidden = locked;
+    lockNote.hidden = !locked;
+    retry.disabled = pending;
   }
 
   async function refreshList() {
     missions = await requestMission(endpoint);
+    if (!missions.some((mission) => mission.id === selectedId)) selectedId = null;
     ready = true;
     retry.hidden = true;
-    renderOptions(select.value);
   }
 
   async function operate(action) {
@@ -80,97 +134,65 @@ export function createMissionControls(panel, { readTarget, applyTarget }) {
     try {
       await action();
     } catch (error) {
-      if (!ready) retry.hidden = false;
       if (error.status === 404) {
-        try {
-          await refreshList();
-        } catch {
-          retry.hidden = false;
-        }
+        try { await refreshList(); } catch { retry.hidden = false; }
       }
-      const message = error instanceof TypeError || error instanceof SyntaxError
+      if (!ready) retry.hidden = false;
+      show(error instanceof TypeError || error instanceof SyntaxError
         ? "임무 설정을 가져오지 못했어요. 서버 연결을 확인해 주세요."
-        : error.message;
-      show(message, true);
+        : error.message, true);
     } finally {
       pending = false;
       render();
     }
   }
 
-  function save(missionId = "") {
-    const missionName = name.value.trim();
-    if (!missionName) {
-      show("임무 이름을 입력해 주세요.", true);
-      name.focus();
-      return;
-    }
+  name.addEventListener("input", () => { save.disabled = !canEdit() || !name.value.trim(); });
+  save.addEventListener("click", () => {
+    if (!canEdit() || !name.value.trim()) return;
+    const dataName = name.value.trim();
+    const id = selectedId;
     operate(async () => {
-      const data = { ...readTarget(), name: missionName };
-      const saved = await requestMission(missionId ? `${endpoint}/${missionId}` : endpoint, {
-        method: missionId ? "PATCH" : "POST",
-        data,
+      const saved = await requestMission(id ? endpoint + "/" + id : endpoint, {
+        method: id ? "PATCH" : "POST",
+        data: { ...readTarget(), name: dataName },
       });
-      loadedId = String(saved.id);
-      if (missionId) {
-        missions = missions.map((mission) => mission.id === saved.id ? saved : mission);
-      } else {
-        missions.unshift(saved);
-      }
+      selectedId = saved.id;
+      missions = id ? missions.map((item) => item.id === saved.id ? saved : item) : [saved, ...missions];
       name.value = saved.name;
-      renderOptions(loadedId);
-      show(`‘${saved.name}’ 설정을 저장했어요.`);
+      show("임무를 저장했습니다.");
     });
-  }
-
-  select.addEventListener("change", () => {
+  });
+  fresh.addEventListener("click", () => {
+    if (!canEdit()) return;
+    selectedId = null;
+    name.value = "";
+    resetTarget();
     show();
     render();
+    name.focus();
   });
-  load.addEventListener("click", () => {
-    const selected = select.value;
-    operate(async () => {
-      const mission = await requestMission(`${endpoint}/${selected}`);
-      if (inputsLocked) {
-        show("시뮬레이션을 종료한 뒤 설정을 불러와 주세요.", true);
-        return;
-      }
-      applyTarget(mission);
-      name.value = mission.name;
-      loadedId = selected;
-      show(`‘${mission.name}’ 설정을 불러왔어요.`);
-    });
-  });
-  create.addEventListener("click", () => save());
-  update.addEventListener("click", () => save(loadedId));
   retry.addEventListener("click", () => operate(refreshList));
-  remove.addEventListener("click", () => {
-    deleteId = select.value;
-    const selectedName = select.selectedOptions[0].text;
-    deleteDescription.textContent = `‘${selectedName}’ 설정을 삭제할까요?`;
-    dialog.returnValue = "";
-    dialog.showModal();
-  });
   dialog.addEventListener("close", async () => {
-    if (dialog.returnValue !== "delete") return;
+    if (dialog.returnValue !== "delete" || !canEdit()) return;
     const id = deleteId;
     await operate(async () => {
-      await requestMission(`${endpoint}/${id}`, { method: "DELETE" });
-      missions = missions.filter((mission) => String(mission.id) !== id);
-      if (loadedId === id) {
-        loadedId = "";
+      await requestMission(endpoint + "/" + id, { method: "DELETE" });
+      missions = missions.filter((item) => item.id !== id);
+      if (selectedId === id) {
+        selectedId = null;
         name.value = "";
       }
-      renderOptions();
-      show("임무 설정을 삭제했어요.");
+      show("임무를 삭제했습니다.");
     });
-    (select.disabled ? name : select).focus();
+    fresh.focus();
   });
-
   operate(refreshList);
   return {
-    lockInputs(locked) {
-      inputsLocked = locked;
+    lockInputs(value) {
+      if (locked === value) return;
+      locked = value;
+      if (locked && dialog.open) dialog.close();
       render();
     },
   };
