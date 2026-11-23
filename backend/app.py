@@ -5,7 +5,7 @@ from typing import Annotated
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.requests import Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 import pymysql
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -16,8 +16,17 @@ from .mission_storage import MissionStore
 from .schemas import Target
 from .simulator import ControlError, Simulator
 from .storage import RunStore
+from .training_routes import create_training_router
 
 ASSETS = Path(__file__).resolve().with_name("web")
+
+
+class ConsoleFiles(StaticFiles):
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        if path.endswith((".js", ".css")):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
 
 
 def same_origin_control(x_maritime_control: Annotated[str | None, Header()] = None):
@@ -36,8 +45,9 @@ def create_app(simulator=None):
 
     api = FastAPI(title="Maritime Simulator Console", lifespan=lifespan)
     api.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "testserver"])
-    api.mount("/static", StaticFiles(directory=ASSETS), name="static")
+    api.mount("/static", ConsoleFiles(directory=ASSETS), name="static")
     api.include_router(create_mission_router(MissionStore(database), same_origin_control))
+    api.include_router(create_training_router(same_origin_control))
 
     @api.exception_handler(ControlError)
     def control_failed(_request: Request, exc: ControlError):
@@ -50,7 +60,9 @@ def create_app(simulator=None):
     @api.exception_handler(RequestValidationError)
     def invalid_request(request: Request, exc: RequestValidationError):
         detail = "좌표를 숫자로 입력하고 고도는 0.1m보다 크게 입력해 주세요."
-        if request.url.path.startswith("/api/missions"):
+        if request.url.path.startswith("/api/training"):
+            detail = "학습 요청값을 확인해 주세요. 라벨 박스는 이미지 안에, 학습 반복은 1~100으로 입력해 주세요."
+        elif request.url.path.startswith("/api/missions"):
             fields = {error["loc"][-1] for error in exc.errors()}
             if "name" in fields:
                 detail = "임무 이름을 1~80자로 입력해 주세요."
@@ -60,7 +72,11 @@ def create_app(simulator=None):
 
     @api.get("/", include_in_schema=False)
     def index():
-        return FileResponse(ASSETS / "index.html")
+        return FileResponse(ASSETS / "index.html", headers={"Cache-Control": "no-cache"})
+
+    @api.get("/training", include_in_schema=False)
+    def training():
+        return RedirectResponse("/#training")
 
     @api.get("/api/status")
     def state():
