@@ -11,14 +11,15 @@ class Database:
         self.config = Path(os.getenv("MARITIME_MYSQL_CONFIG", str(default_config))).expanduser()
 
     @contextmanager
-    def cursor(self, *, transaction=False):
+    def cursor(self, *, transaction=False, streaming=False):
         if not self.config.is_file():
             raise pymysql.OperationalError("MySQL client configuration is missing.")
         connection = pymysql.connect(
             read_default_file=str(self.config),
             read_default_group="client",
             charset="utf8mb4",
-            cursorclass=pymysql.cursors.DictCursor,
+            binary_prefix=True,
+            cursorclass=pymysql.cursors.SSDictCursor if streaming else pymysql.cursors.DictCursor,
             connect_timeout=2,
             read_timeout=3,
             write_timeout=3,

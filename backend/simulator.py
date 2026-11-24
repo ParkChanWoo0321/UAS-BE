@@ -1,16 +1,22 @@
+from datetime import datetime
 import json
 import logging
 import os
 from pathlib import Path
 import select
 import subprocess
+import tempfile
 import threading
 import time
 
 import pymysql
 
+from .desktop_views import open_desktop_views
+from .patrol_capture import PatrolCapture
+
 LOG = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parent
+FLIGHT_STEPS = {"takeoff", "cruise", "patrol", "returning", "landed"}
 
 
 class ControlError(Exception):
@@ -18,10 +24,13 @@ class ControlError(Exception):
 
 
 class Simulator:
-    def __init__(self, store, launcher=None, setup=None):
+    def __init__(self, store, launcher=None, setup=None, *, capture_directory=None, capture_enabled=None, capture_weights=None):
         self.store = store
         self.launcher = Path(launcher or Path.home() / ".local/bin/maritime")
         self.setup = Path(setup or Path.home() / "maritime-setup")
+        self.capture_directory = Path(capture_directory or self.setup / "captures")
+        self.capture_enabled = capture_enabled
+        self.capture_weights = capture_weights
         self.guard = threading.RLock()
         self.current = None
         self.thread = None
@@ -142,43 +151,76 @@ class Simulator:
         except pymysql.MySQLError:
             LOG.exception("Could not persist simulator run %s.", self.current["id"])
 
+    def _claim_run(self):
+        runs = self.setup / "runs"
+        runs.mkdir(parents=True, exist_ok=True)
+        directory = Path(tempfile.mkdtemp(prefix=datetime.now().strftime("%Y%m%d-%H%M%S-"), dir=runs))
+        marker = directory / "owner"
+        marker.write_text(f"{directory}\n", encoding="utf-8")
+        try:
+            os.link(marker, self.setup / "active-run")
+        except FileExistsError as exc:
+            raise ControlError("다른 시뮬레이션이 이미 실행 중이에요.") from exc
+        finally:
+            marker.unlink()
+        return str(directory)
+
+    def _open_desktop(self, logs, ready):
+        ground_control = None
+        try:
+            if self._marker() == logs and not self.stop_requested.is_set():
+                ground_control = open_desktop_views(self.launcher, logs)
+        finally:
+            if self._marker() == logs:
+                ready.touch()
+        if ground_control is not None:
+            ground_control.wait()
+
     def _operate(self, run, resume):
-        worker = None
+        worker = runtime = capture = None
         failure = None
         owned_logs = run["log_dir"] if resume else None
         try:
             if not resume:
-                started = subprocess.run(
-                    [self.launcher, "start", "--headless"], capture_output=True, text=True, timeout=70
-                )
-                if started.returncode or "Simulation started with sea_mission." not in started.stdout:
-                    detail = (started.stderr or started.stdout).strip()
-                    raise ControlError(f"시뮬레이터 시작 실패 · {detail[-350:]}" if detail else "시뮬레이터 시작 실패")
-                owned_logs = self._marker()
-                if not owned_logs:
-                    raise ControlError("시뮬레이터의 실행 기록 경로를 확인하지 못했어요.")
+                owned_logs = self._claim_run()
                 with self.guard:
                     run.update(phase="waiting", log_dir=owned_logs)
                     self._persist()
+                prepared = subprocess.run([self.launcher, "exec", "true"], capture_output=True, text=True, timeout=35)
+                if prepared.returncode:
+                    raise ControlError((prepared.stderr or prepared.stdout).strip()[-550:] or "Docker 준비 실패")
+                with (Path(owned_logs) / "runtime.log").open("ab") as log:
+                    runtime = subprocess.Popen(
+                        [self.launcher, "exec", "python3", "-B", str(ROOT / "sim_runtime.py"), owned_logs],
+                        stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                    )
             if self.stop_requested.is_set():
                 return
             if self._marker() != owned_logs:
                 raise ControlError("시뮬레이터 실행이 바뀌었어요.")
             args = [self.launcher, "exec", "python3", str(ROOT / "ros_agent.py"),
                     str(run["north"]), str(run["east"]), str(run["altitude"])]
+            desktop_ready = None
             if resume:
                 args.append("--observe")
+            elif os.environ.get("MARITIME_DESKTOP_VIEWS", "1") != "0":
+                desktop_ready = Path(owned_logs) / "desktop.ready"
+                args.extend(["--desktop-ready", str(desktop_ready)])
+            capture = PatrolCapture(self.launcher, self.capture_directory, run["id"], owned_logs,
+                                    model=self.capture_weights)
             with (Path(owned_logs) / "console.log").open("ab") as diagnostic:
                 worker = subprocess.Popen(
                     args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=diagnostic
                 )
                 with self.guard:
                     self.worker = worker
-                self._listen(worker)
+                self._listen(worker, capture, runtime, owned_logs, desktop_ready)
         except (ControlError, OSError, subprocess.SubprocessError) as exc:
             LOG.warning("Simulator run %s ended: %s", run["id"], exc)
             failure = str(exc)[:550]
         finally:
+            if capture is not None:
+                capture.close()
             if owned_logs and self._marker() == owned_logs:
                 try:
                     subprocess.run([self.launcher, "stop"], capture_output=True, timeout=20, check=True)
@@ -186,6 +228,13 @@ class Simulator:
                         failure = failure or "시뮬레이터 종료를 확인하지 못했어요."
                 except (OSError, subprocess.SubprocessError):
                     failure = failure or "시뮬레이터 종료 요청에 실패했어요."
+            if runtime is not None and runtime.poll() is None:
+                runtime.terminate()
+                try:
+                    runtime.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    runtime.kill()
+                    runtime.wait()
             if worker is not None:
                 if worker.poll() is None:
                     worker.terminate()
@@ -206,9 +255,12 @@ class Simulator:
                 run["active"] = False
                 self._persist()
 
-    def _listen(self, worker):
+    def _listen(self, worker, capture, runtime, logs, desktop_ready):
         buffer = b""
+        show_desktop = desktop_ready is not None
         while not self.stop_requested.is_set():
+            if runtime is not None and runtime.poll() is not None:
+                raise ControlError("시뮬레이터가 종료됐어요. runtime.log와 구성 요소 로그를 확인해 주세요.")
             if not select.select([worker.stdout], [], [], 0.5)[0]:
                 continue
             chunk = os.read(worker.stdout.fileno(), 8192)
@@ -228,13 +280,26 @@ class Simulator:
                 if event.get("type") == "error":
                     raise ControlError(event["message"])
                 if event.get("type") == "telemetry":
-                    self._apply(event["data"])
+                    telemetry = event["data"]
+                    self._apply(telemetry)
+                    if show_desktop and telemetry.get("position_valid") and not self.stop_requested.is_set():
+                        show_desktop = False
+                        threading.Thread(target=self._open_desktop, args=(logs, desktop_ready), daemon=True).start()
+                    if not self.stop_requested.is_set():
+                        enabled = self.capture_enabled is None or self.capture_enabled()
+                        capture.update(telemetry, enabled)
 
     def _apply(self, data):
         with self.guard:
             if self.stop_requested.is_set():
                 return
             previous = self.current["phase"]
+            observed = set((self.current["telemetry"] or {}).get("observed_phases", ()))
+            if data["phase"] in FLIGHT_STEPS:
+                observed.add(data["phase"])
+            if data["fixed_wing"] and not data["transitioning"]:
+                observed.add("transition")
+            data["observed_phases"] = sorted(observed)
             self.last_update = time.monotonic() if data.get("fresh") else 0.0
             if data.get("return_response"):
                 self.return_pending = False

@@ -79,6 +79,10 @@ class TrainingService:
         return {"kind": "base", "filename": self.weights.name, "job_id": None,
                 "needs_retraining": bool(model_job), "available": self.weights.is_file()}, self.weights
 
+    def current_weights(self):
+        _, model_job, _ = self.store.overview()
+        return self.active_model(model_job)[1]
+
     def runtime(self):
         with self._readiness_lock:
             checked_at, media_ready, training_ready = self._readiness
@@ -199,8 +203,8 @@ class TrainingService:
         return self.store.job(job_id)
 
 
-def create_training_router(require_write_access):
-    service = TrainingService()
+def create_training_router(require_write_access, service=None):
+    service = service or TrainingService()
     store = service.store
     router = APIRouter(prefix="/api/training", tags=["training"])
     write = [Depends(require_write_access)]
