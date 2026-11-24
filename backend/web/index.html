@@ -8,7 +8,8 @@
   <title>Coastline · 해양 임무 관제</title>
   <link rel="stylesheet" href="/static/style.css?v=coastline">
   <link rel="stylesheet" href="/static/training.css?v=coastline-model">
-  <script src="/static/console.js?v=coastline-model" type="module"></script>
+  <link rel="stylesheet" href="/static/captures.css">
+  <script src="/static/console.js?v=coastline-capture-db" type="module"></script>
 </head>
 <body>
   <a class="skip-link" href="#workspace">본문 바로가기</a>
@@ -25,6 +26,7 @@
     </div>
     <nav class="workspace-tabs" aria-label="워크스페이스">
       <a href="#operations" id="operations-tab" aria-current="page">임무 관제</a>
+      <a href="#captures" id="captures-tab">순찰 촬영</a>
       <a href="#training" id="training-tab">선박 감지 학습</a>
     </nav>
     <div class="connections">
@@ -68,7 +70,7 @@
         <dl class="panel telemetry" aria-label="현재 비행 정보">
           <div><dt>현재 좌표</dt><dd id="position">—</dd><p>북쪽 / 동쪽 · m</p></div>
           <div><dt>현재 고도</dt><dd id="height">—</dd><p>지면 기준</p></div>
-          <div><dt>목표점까지</dt><dd id="distance">—</dd><p>남은 직선 거리</p></div>
+          <div><dt id="distance-title">목표점까지</dt><dd id="distance">—</dd><p>남은 직선 거리</p></div>
           <div><dt>비행 모드</dt><dd id="mode">—</dd><p id="mode-hint">수신 대기</p></div>
         </dl>
 
@@ -150,6 +152,29 @@
           <span class="aircraft-art"><img src="/static/coastline/aircraft.svg" alt=""></span>
         </div>
       </aside>
+    </section>
+
+    <section id="captures" class="capture-workspace" aria-labelledby="capture-title" hidden>
+      <header class="workspace-heading">
+        <div>
+          <h1 id="capture-title">순찰 촬영</h1>
+          <p>순찰 중 선박을 감지하면 기체 카메라 사진과 짧은 영상이 여기에 저장됩니다.</p>
+        </div>
+      </header>
+      <section class="panel capture-collection" aria-labelledby="capture-collection-title">
+        <div>
+          <h2 id="capture-collection-title">자동 수집</h2>
+          <p id="capture-collection-status" class="note" role="status">수집 상태를 확인하는 중입니다.</p>
+        </div>
+        <button id="capture-toggle" class="primary" type="button" disabled>수집 상태 확인 중</button>
+      </section>
+      <p id="capture-status" class="note" role="status">촬영 기록을 불러오는 중입니다.</p>
+      <ul id="capture-list" class="capture-list" aria-label="순찰 촬영 기록"></ul>
+      <nav id="capture-pagination" class="capture-pagination" aria-label="촬영 기록 페이지" hidden>
+        <button id="capture-previous" type="button">이전</button>
+        <span id="capture-page" class="note"></span>
+        <button id="capture-next" type="button">다음</button>
+      </nav>
     </section>
 
     <section id="training" class="workspace-view training-workspace" aria-labelledby="training-title" hidden>
@@ -261,6 +286,15 @@
       </aside>
     </section>
   </main>
+
+  <dialog id="capture-dialog" aria-labelledby="capture-player-title">
+    <header class="panel-title">
+      <h2 id="capture-player-title">순찰 영상</h2>
+      <form method="dialog"><button type="submit" autofocus>닫기</button></form>
+    </header>
+    <video id="capture-player" controls playsinline></video>
+    <a id="capture-download" class="button" download>영상 다운로드</a>
+  </dialog>
 
   <dialog id="mission-delete-dialog" aria-labelledby="mission-delete-title" aria-describedby="mission-delete-description">
     <form method="dialog">

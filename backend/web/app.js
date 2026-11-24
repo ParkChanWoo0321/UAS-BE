@@ -20,7 +20,7 @@ const phases = {
 const goodPhases = new Set(["takeoff", "transition", "cruise", "patrol", "returning", "landed"]);
 const badPhases = new Set(["failsafe", "signal_lost", "failed", "interrupted"]);
 const modes = { 0: "수동", 1: "고도 제어", 2: "위치 제어", 3: "자동 임무", 4: "대기 비행",
-  5: "RTL", 14: "Offboard", 17: "이륙", 18: "착륙" };
+  5: "RTL", 14: "Offboard", 17: "이륙", 18: "착륙", 22: "VTOL 이륙" };
 const format = new Intl.NumberFormat("ko-KR", { maximumFractionDigits: 1 });
 const dateFormat = new Intl.DateTimeFormat("ko-KR", {
   timeZone: "Asia/Seoul", dateStyle: "short", timeStyle: "medium",
@@ -98,8 +98,12 @@ function renderHistory(history) {
 
 function renderSteps(run) {
   const phase = run?.phase;
+  run?.telemetry?.observed_phases?.forEach((phase) => observed.add(phase));
   const current = steps.findIndex((step) => step.dataset.step === phase);
-  if (current !== -1) observed.add(phase);
+  if (current !== -1 && phase !== "transition") observed.add(phase);
+  if (run?.connected && run.telemetry?.fixed_wing && !run.telemetry.transitioning) {
+    observed.add("transition");
+  }
   steps.forEach((step, index) => {
     const isCurrent = current === index;
     const done = !isCurrent && observed.has(step.dataset.step);
@@ -174,7 +178,8 @@ function render() {
   byId("message").hidden = !message;
   byId("position").textContent = point ? format.format(point[1]) + " / " + format.format(point[0]) : "—";
   byId("height").textContent = meters(telemetry?.altitude);
-  byId("distance").textContent = meters(telemetry?.target_distance);
+  byId("distance-title").textContent = returning ? "출발점까지" : "목표점까지";
+  byId("distance").textContent = meters(returning ? telemetry?.home_distance : telemetry?.target_distance);
   byId("mode").textContent = !Number.isInteger(telemetry?.nav) ? "—"
     : modes[telemetry.nav] || "PX4 " + telemetry.nav;
   byId("mode-hint").textContent = telemetry?.fixed_wing ? "고정익"
